@@ -1,5 +1,8 @@
 # SWIFT Taskbook
-# Web Application for Task Management 
+# Web Application for Task Management
+
+# system libraries
+import os
 
 # web transaction objects
 from bottle import request, response
@@ -10,8 +13,27 @@ from bottle import route, get, put, post, delete
 # web page template processor
 from bottle import template
 
+#database library & support
+import dataset
+from random import seed, randint
+import time
+
+VERSION=0.1
+
 # development server
-from bottle import run 
+PYTHONANYWHERE = ("PYTHONANYWHERE_SITE" in os.environ)
+
+if PYTHONANYWHERE:
+    from bottle import default_app
+else:
+    from bottle import run
+
+# ---------------------------
+# Session database
+# ---------------------------
+
+session_db = dataset.connect('sqlite:///session.db')
+seed()
 
 # ---------------------------
 # web application routes
@@ -20,28 +42,103 @@ from bottle import run
 @route('/')
 @route('/tasks')
 def tasks():
-    username = request.cookies.get('username', 'guest')
-    print("username= ",username)
-    response.set_cookie('username', 'hunter')  # <host/url> <name> <value>
-    return template("tasks.tpl") 
+    session_id = request.cookies.get('session_id',None)
+    print("session_id in request = ",session_id)
+    if session_id:
+        session_id = int(session_id)
+    else:
+        session_id = randint(10000000, 20000000)
+    # try to load session information
+    session_table = session_db.create_table('session')
+    sessions = list(session_table.find(session_id=session_id))
+    if len(sessions) == 0:
+        # we need to create a session
+        session = {
+                    "session_id":session_id,
+                    "started_at":time.time()
+                  }
+        # put the session in the database
+        session_table.insert(session)
+    else:
+        session = sessions[0]
+    # update the session
+    if "visits" in session:
+        session['visits'] = session['visits'] + 1
+    else:
+        session['visits'] = 1
+    print(session)
+    # persist the session
+    session_table.update(row=session, keys=['session_id'])
 
-@route('/login')
-def login():
-    return template("login.tpl") 
+    response.set_cookie('session_id',str(session_id))
+    print("session_id send in response = ",str(session_id))
+    return template("tasks.tpl")
+
+
+@route('/session')
+def tasks():
+    session_id = request.cookies.get('session_id',None)
+    print("session_id in request = ",session_id)
+    if session_id:
+        session_id = int(session_id)
+        session_table = session_db.create_table('session')
+        sessions = list(session_table.find(session_id=session_id))
+        if len(list(sessions)) > 0:
+            session = sessions[0]
+        else:
+            session = {}
+    else:
+        session = {}
+    response.set_cookie('session_id',str(session_id))
+    return template("session.tpl",session_str=str(dict(session)))
+
+@route('/login/<user>')
+def login(user):
+    username = user
+    print(username)
+    session_id = request.cookies.get('session_id',None)
+    print("session_id in request = ",session_id)
+    if session_id:
+        session_id = int(session_id)
+    else:
+        session_id = randint(10000000, 20000000)
+    # try to load session information
+    session_table = session_db.create_table('session')
+    sessions = list(session_table.find(session_id=session_id))
+    if len(sessions) == 0:
+        # we need to create a session
+        session = {
+                    "session_id":session_id,
+                    "started_at":time.time()
+                  }
+        # put the session in the database
+        session_table.insert(session)
+    else:
+        session = sessions[0]
+    # update the session
+    session['username'] = username
+    print(session)
+    # persist the session
+    session_table.update(row=session, keys=['session_id'])
+    return template("login.tpl")
 
 @route('/register')
 def login():
-    return template("register.tpl") 
+    return template("register.tpl")
 
 # ---------------------------
-# task REST api 
+# task REST api
 # ---------------------------
 
 import json
 import dataset
 import time
 
-taskbook_db = dataset.connect('sqlite:///taskbook.db')  
+taskbook_db = dataset.connect('sqlite:///taskbook.db')
+
+@get('/api/version')
+def get_version():
+    return { "version":VERSION }
 
 @get('/api/tasks')
 def get_tasks():
@@ -97,7 +194,7 @@ def update_task():
     except Exception as e:
         response.status="400 Bad Request:"+str(e)
         return
-    if 'list' in data: 
+    if 'list' in data:
         data['time'] = time.time()
     try:
         task_table = taskbook_db.get_table('task')
@@ -128,6 +225,8 @@ def delete_task():
     response.headers['Content-Type'] = 'application/json'
     return json.dumps({'success': True})
 
-if __name__ == "__main__":
-
-    run(host='localhost', port=8080, debug=True)
+if PYTHONANYWHERE:
+    application = default_app()
+else:
+   if __name__ == "__main__":
+       run(host='localhost', port=8080, debug=True)
