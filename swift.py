@@ -13,7 +13,7 @@ from bottle import route, get, put, post, delete
 # web page template processor
 from bottle import template
 
-#database library & support
+# database library & support
 import dataset
 from random import seed, randint
 import time
@@ -31,17 +31,15 @@ else:
     from bottle import run
 
 # ---------------------------
-# User database
+# user management
 # ---------------------------
-
 user_db = dataset.connect('sqlite:///user.db')
 seed()
 
 
 # ---------------------------
-# Session database
+# session management
 # ---------------------------
-
 session_db = dataset.connect('sqlite:///session.db')
 
 # ---------------------------
@@ -52,8 +50,11 @@ session_db = dataset.connect('sqlite:///session.db')
 @route('/tasks')
 def tasks():
     session_id = request.cookies.get('session_id',None)
+    print([session_id])
     print("session_id in request = ",session_id)
-    if session_id:
+    if session_id == "None":
+        session_id = None
+    if session_id :
         session_id = int(session_id)
     else:
         session_id = randint(10000000, 20000000)
@@ -64,34 +65,33 @@ def tasks():
         # we need to create a session
         session = {
                     "session_id":session_id,
-                    "started_at":time.time()
-                  }
+                    "started_at":time.time(),
+                    "username" : None
+                  } 
         # put the session in the database
         session_table.insert(session)
     else:
         session = sessions[0]
-    # update the session
-    if "visits" in session:
-        session['visits'] = session['visits'] + 1
-    else:
-        session['visits'] = 1
     print(session)
-
-    if session["username"] != None:
+    if "username" not in session: 
         return template("login_failure.tpl",user="not logged in", password="n/a")
+    if session["username"] == None:
+        return template("login_failure.tpl",user="not logged in", password="n/a")
+
     # persist the session
     session_table.update(row=session, keys=['session_id'])
 
-    response.set_cookie('session_id',str(session_id))
-    print("session_id send in response = ",str(session_id))
+    assert session_id
+    assert int(session_id) 
+    print("session_id sent in response = ",str(session_id))
+    response.set_cookie('session_id',str(session_id))    # <host/url> <name> <value>
     return template("tasks.tpl")
 
-
 @route('/session')
-def tasks():
+def session():
     session_id = request.cookies.get('session_id',None)
     print("session_id in request = ",session_id)
-    if session_id:
+    if session_id and session_id != "None":
         session_id = int(session_id)
         session_table = session_db.create_table('session')
         sessions = list(session_table.find(session_id=session_id))
@@ -101,42 +101,50 @@ def tasks():
             session = {}
     else:
         session = {}
-    response.set_cookie('session_id',str(session_id))
-    return template("session.tpl",session_str=str(dict(session)))
+    return template("session.tpl",session_str=session)
 
+def hash(x):
+    sum = 0
+    for c in x:
+        sum = sum + ord(c)
+    return sum
 
 @route('/register/<user>/<password>')
 def register(user, password):
     print("registering",user,password)
-
     session_id = request.cookies.get('session_id',None)
     print("session_id in request = ",session_id)
+    assert session_id != "None", "Darn it, string None in cookie again!"
+    session_table = session_db.create_table('session')
     if session_id:
         session_id = int(session_id)
-        session_table = session_db.create_table('session')
         sessions = list(session_table.find(session_id=session_id))
         if len(list(sessions)) > 0:
             session = sessions[0]
         else:
             session = {}
     else:
-        session = {}
-    
+        session_id = randint(10000000, 20000000)
+        session = {                   
+                    "session_id":session_id,
+                    "started_at":time.time(),
+                    "username" : None
+                    }
+
     user_table = user_db.create_table('user')
+    salt = str(randint(10000000, 20000000))
     user_profile = {
                 "username":user,
-                "password":password[::-2]
-            }
+                "password":hash(password+salt),
+                "salt":salt 
+            } 
     user_table.insert(user_profile)
 
     session["username"] = user
     session_table.update(row=session, keys=['session_id'])
 
-    response.set_cookie('session_id', str(session_id))
-
+    response.set_cookie('session_id',str(session_id))  
     return template("register.tpl",user=user, password=password)
-
-
 
 @route('/login/<user>/<password>')
 def login(user, password):
@@ -147,19 +155,22 @@ def login(user, password):
     if len(list(users)) > 0:
         user_profile = list(users)[0]
         print(user_profile)
-        if (password[::2] != user_profile["password"]):
+        salt = user_profile['salt']
+        if (hash(password + salt) != user_profile["password"]):            
             return template("login_failure.tpl",user=user, password=password)
     else:
-        return template("login_failure",user=user, password=password)
-
-    if not(user in passwords and passwords[user] == password):
         return template("login_failure.tpl",user=user, password=password)
     session_id = request.cookies.get('session_id',None)
-    print("session_id in request = ",session_id)
+    if session_id == "None":
+        session_id = None
+    print("session_id in request = ",[session_id])
     if session_id:
+        print("getting session from cookie")
         session_id = int(session_id)
     else:
+        print("getting new session from randint")
         session_id = randint(10000000, 20000000)
+    print("Login", session_id)
     # try to load session information
     session_table = session_db.create_table('session')
     sessions = list(session_table.find(session_id=session_id))
@@ -168,7 +179,7 @@ def login(user, password):
         session = {
                     "session_id":session_id,
                     "started_at":time.time()
-                  }
+                  } 
         # put the session in the database
         session_table.insert(session)
     else:
@@ -178,11 +189,13 @@ def login(user, password):
     print(session)
     # persist the session
     session_table.update(row=session, keys=['session_id'])
+    print("persisting cookie as ",[session_id])
+    response.set_cookie('session_id',str(session_id))    # <host/url> <name> <value>
     return template("login.tpl",user=user, password=password)
 
-#@route('/register')
-#def login():
-#    return template("register.tpl")
+# @route('/register')
+# def login():
+#     return template("register.tpl")
 
 # ---------------------------
 # task REST api
