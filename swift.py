@@ -18,9 +18,9 @@ import dataset
 from random import seed, randint
 import time
 
-VERSION=0.1
+import passwords
 
-passwords = {}
+VERSION=0.1
 
 # development server
 PYTHONANYWHERE = ("PYTHONANYWHERE_SITE" in os.environ)
@@ -135,8 +135,7 @@ def register(user, password):
     salt = str(randint(10000000, 20000000))
     user_profile = {
                 "username":user,
-                "password":hash(password+salt),
-                "salt":salt 
+                "password":passwords.encode_password(password), 
             } 
     user_table.insert(user_profile)
 
@@ -155,11 +154,10 @@ def login(user, password):
     if len(list(users)) > 0:
         user_profile = list(users)[0]
         print(user_profile)
-        salt = user_profile['salt']
-        if (hash(password + salt) != user_profile["password"]):            
-            return template("login_failure.tpl",user=user, password=password)
+        if (not passwords.verify_password(password, user_profile["password"])):            
+            return template("login_failure.tpl",user=user, password="****")
     else:
-        return template("login_failure.tpl",user=user, password=password)
+        return template("login_failure.tpl",user=user, password="****")
     session_id = request.cookies.get('session_id',None)
     if session_id == "None":
         session_id = None
